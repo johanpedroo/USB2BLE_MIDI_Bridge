@@ -1,0 +1,182 @@
+# USB2BLE MIDI Bridge – Raspberry Pi 3B
+
+This folder contains a **Python port** of the ESP32-S3 firmware.  
+It runs natively on a **Raspberry Pi 3B** (or any Raspberry Pi with Bluetooth LE and a USB port) under **Raspberry Pi OS** (Bullseye / Bookworm).
+
+The bridge connects your **Yamaha Digital Piano** (or any USB-MIDI device) via USB and re-transmits all MIDI data over **Bluetooth LE MIDI**, so you can play wirelessly with any BLE MIDI client (GarageBand, Pianoteq, forScore, etc.).
+
+---
+
+## Hardware required
+
+| Item | Notes |
+|------|-------|
+| Raspberry Pi 3B (or newer) | Built-in Bluetooth 4.1 (BLE) |
+| USB-A cable | Piano → Raspberry Pi USB port |
+| Yamaha Digital Piano | Tested: YDP-144 – any Yamaha with USB MIDI works |
+| 5V power supply | For the Raspberry Pi |
+
+No additional USB-to-Bluetooth dongle or wiring is needed.
+
+---
+
+## Architecture
+
+```
+┌──────────────────────┐
+│   Yamaha Piano        │
+│  (USB MIDI device)    │
+└──────────┬───────────┘
+           │ USB-A cable
+           ▼
+┌──────────────────────────────────────────┐
+│           Raspberry Pi 3B                │
+│                                          │
+│  usb_midi.py                             │
+│  ┌───────────────────────────────────┐  │
+│  │ python-rtmidi  (ALSA backend)     │  │
+│  │  • scans ALSA MIDI ports          │  │
+│  │  • auto-selects Yamaha device     │  │
+│  │  • hot-plug retry every 5 s       │  │
+│  └──────────────┬────────────────────┘  │
+│                 │ raw MIDI bytes         │
+│  midi_bridge.py │ (thread-safe)          │
+│                 ▼                        │
+│  ble_midi.py                             │
+│  ┌───────────────────────────────────┐  │
+│  │ bless  (BlueZ / D-Bus backend)    │  │
+│  │  • GATT server                    │  │
+│  │  • 13-bit BLE MIDI timestamps     │  │
+│  │  • Advertises "USB2BLE MIDI Bridge│  │
+│  └──────────────┬────────────────────┘  │
+│                 │ Bluetooth LE           │
+└─────────────────┼────────────────────────┘
+                  ▼
+        ┌──────────────────┐
+        │  BLE MIDI client  │
+        │ (iOS/Android/Mac) │
+        └──────────────────┘
+```
+
+| Python module | ESP-IDF equivalent |
+|---|---|
+| `usb_midi.py` | `components/usb_midi/usb_midi.c` |
+| `ble_midi.py` | `components/ble_midi/ble_midi.c` |
+| `midi_bridge.py` | `main/main.c` |
+
+---
+
+## Quick start
+
+### 1. Install (automated)
+
+```bash
+git clone https://github.com/johanpedroo/USB2BLE_MIDI_Bridge.git
+cd USB2BLE_MIDI_Bridge/raspberry_pi
+chmod +x setup.sh
+sudo ./setup.sh
+```
+
+`setup.sh` will:
+- Install BlueZ, ALSA headers, and Python 3 packages
+- Create a virtual-env at `/opt/midi_bridge/venv`
+- Copy the application to `/opt/midi_bridge/`
+- Register and start the `midi_bridge` **systemd service** (auto-start on boot)
+
+### 2. Verify
+
+```bash
+# Check the service is running
+sudo systemctl status midi_bridge
+
+# Watch live logs
+sudo journalctl -fu midi_bridge
+```
+
+Expected output when the piano is plugged in:
+
+```
+[INFO]  BLE MIDI advertising as 'USB2BLE MIDI Bridge'
+[INFO]  Scanning for USB MIDI device…
+[INFO]  Yamaha device found on port 0: Yamaha Corporation YDP-144
+[INFO]  USB MIDI device ready — bridging to BLE MIDI.
+```
+
+### 3. Connect from your device
+
+1. Open a BLE MIDI app (e.g. GarageBand on iOS → Settings → Bluetooth MIDI Devices).
+2. Tap **"USB2BLE MIDI Bridge"** — the device will connect within a few seconds.
+3. Play the piano — MIDI notes will arrive wirelessly.
+
+---
+
+## Manual run (without systemd)
+
+```bash
+cd /opt/midi_bridge          # or wherever you cloned the repo
+source venv/bin/activate     # if you created a venv manually
+python3 midi_bridge.py
+
+# Verbose debug output:
+python3 midi_bridge.py --log-level DEBUG
+```
+
+---
+
+## Troubleshooting
+
+### "No ALSA MIDI ports found"
+- Make sure the piano is powered on and the USB cable is firmly connected.
+- Run `aconnect -l` to list ALSA MIDI ports.  The bridge rescans automatically every 5 seconds.
+- If the piano appears as a USB audio device only, check `lsusb` and `amidi -l`.
+
+### "BLE advertising fails / adapter not found"
+```bash
+sudo rfkill unblock bluetooth  # unblock if soft-blocked
+sudo hciconfig hci0 up         # bring adapter up
+sudo systemctl restart bluetooth
+```
+
+### Permission errors with BlueZ
+Running as `root` (the default in `midi_bridge.service`) avoids most permission issues.  
+To run as a non-root user, add the user to the `bluetooth` group and grant D-Bus policy access:
+
+```bash
+sudo usermod -aG bluetooth $USER
+```
+
+### Check Bluetooth adapter
+```bash
+hciconfig          # should show: hci0 ... UP RUNNING
+bluetoothctl show  # should show: Powered: yes
+```
+
+---
+
+## Service management
+
+```bash
+# Start / stop / restart
+sudo systemctl start   midi_bridge
+sudo systemctl stop    midi_bridge
+sudo systemctl restart midi_bridge
+
+# Enable / disable auto-start on boot
+sudo systemctl enable  midi_bridge
+sudo systemctl disable midi_bridge
+
+# Logs
+sudo journalctl -fu midi_bridge        # follow live
+sudo journalctl -u  midi_bridge --since "1 hour ago"
+```
+
+---
+
+## Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `python-rtmidi` | ≥ 1.5.0 | USB MIDI via ALSA |
+| `bless` | ≥ 0.2.7 | BLE GATT server via BlueZ/D-Bus |
+
+System packages: `bluez`, `bluetooth`, `libasound2-dev`, `libdbus-1-dev`, `python3-dev`
