@@ -1,8 +1,17 @@
 # USB2BLE MIDI Bridge
 
-This project converts USB MIDI signals from Yamaha Digital Piano to Bluetooth MIDI (BLE MIDI), enabling wireless MIDI connectivity.
+This project converts USB MIDI signals from a Yamaha Digital Piano to Bluetooth MIDI (BLE MIDI), enabling wireless MIDI connectivity.
 
 Tested on Yamaha YDP-144.
+
+> **Two implementations are available:**
+>
+> | Platform | Directory | Language / Framework |
+> |---|---|---|
+> | **ESP32-S3** (original) | *(root)* | C / ESP-IDF + FreeRTOS |
+> | **Raspberry Pi 3B** | [`raspberry_pi/`](raspberry_pi/) | Python 3 / BlueZ + ALSA |
+>
+> See **[raspberry_pi/README.md](raspberry_pi/README.md)** for the Raspberry Pi setup guide.
 
 ## Hardware Requirements
 

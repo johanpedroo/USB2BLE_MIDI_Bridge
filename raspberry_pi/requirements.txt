@@ -1,0 +1,13 @@
+# Runtime dependencies for USB2BLE MIDI Bridge (Raspberry Pi)
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# System packages required BEFORE pip install (see setup.sh):
+#   sudo apt-get install -y libasound2-dev libdbus-1-dev python3-dev
+
+# USB MIDI – python bindings for RtMidi (uses ALSA on Linux)
+python-rtmidi>=1.5.0
+
+# BLE MIDI GATT server – cross-platform BLE server library (uses BlueZ/D-Bus on Linux)
+bless>=0.2.7

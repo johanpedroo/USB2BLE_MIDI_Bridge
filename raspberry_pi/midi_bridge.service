@@ -1,0 +1,33 @@
+[Unit]
+Description=USB2BLE MIDI Bridge
+Documentation=https://github.com/johanpedroo/USB2BLE_MIDI_Bridge
+# Start after Bluetooth and sound subsystems are ready
+After=bluetooth.target sound.target dbus.service
+Wants=bluetooth.target dbus.service
+
+[Service]
+Type=simple
+# Running as root gives BlueZ GATT advertising permissions out of the box.
+#
+# SECURITY NOTE: for a production/long-running deployment you should switch
+# to a dedicated unprivileged user.  Steps:
+#   sudo useradd -r -G bluetooth,audio midi_bridge
+#   sudo usermod -aG bluetooth,audio midi_bridge
+# Then replace User=root with User=midi_bridge below.
+User=root
+
+# ExecStart is rewritten by setup.sh to use the venv Python path.
+ExecStart=/opt/midi_bridge/venv/bin/python3 /opt/midi_bridge/midi_bridge.py
+
+# Restart automatically if the bridge crashes or if the piano is unplugged
+# and the process exits unexpectedly.
+Restart=always
+RestartSec=5
+
+# Log to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=midi_bridge
+
+[Install]
+WantedBy=multi-user.target
