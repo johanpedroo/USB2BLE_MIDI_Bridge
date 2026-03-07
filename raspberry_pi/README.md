@@ -108,6 +108,9 @@ Expected output when the piano is plugged in:
 2. Tap **"USB2BLE MIDI Bridge"** — the device will connect within a few seconds.
 3. Play the piano — MIDI notes will arrive wirelessly.
 
+> **No Bluetooth password or PIN is required.**
+> BLE MIDI uses the "Just Works" pairing model — you will not be asked for any password or PIN code when connecting.
+
 ---
 
 ## Manual run (without systemd)
@@ -124,6 +127,16 @@ python3 midi_bridge.py --log-level DEBUG
 ---
 
 ## Troubleshooting
+
+### "Do I need a password or PIN to connect?"
+
+No. BLE MIDI uses the Bluetooth "Just Works" pairing model. You should **not** be asked for any
+password, PIN, or passkey when connecting. Simply tap **"USB2BLE MIDI Bridge"** in your BLE MIDI
+app's device list and it will connect automatically.
+
+If your device unexpectedly asks for a PIN, try the following:
+- Remove the device from your system's Bluetooth paired-devices list and reconnect from your BLE MIDI app.
+- On iOS, go to **Settings → Bluetooth**, tap the ⓘ next to the device, choose **Forget This Device**, then reconnect via your BLE MIDI app (not the system Bluetooth settings).
 
 ### "No ALSA MIDI ports found"
 - Make sure the piano is powered on and the USB cable is firmly connected.
