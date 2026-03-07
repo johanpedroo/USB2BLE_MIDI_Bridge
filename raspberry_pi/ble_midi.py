@@ -59,38 +59,73 @@ class BLEMidi:
     # Public API (mirrors ble_midi.h)
     # ------------------------------------------------------------------
 
-    async def init(self) -> None:
+    async def init(
+        self, max_retries: int = 10, retry_delay: float = 3.0
+    ) -> None:
         """
         Initialise the BLE stack, register the MIDI GATT service, and start
         advertising.  Equivalent to ble_midi_init() in ble_midi.c.
+
+        If BlueZ refuses to register the advertisement (e.g. a stale
+        advertisement from a previous crash is still registered, or the
+        adapter is not yet ready), retry up to *max_retries* times with
+        *retry_delay* seconds between attempts.
         """
-        server = BlessServer(name="USB2BLE MIDI Bridge", loop=self._loop)
-        server.read_request_func = self._handle_read
-        server.write_request_func = self._handle_write
+        for attempt in range(1, max_retries + 1):
+            server = BlessServer(name="USB2BLE MIDI Bridge", loop=self._loop)
+            server.read_request_func = self._handle_read
+            server.write_request_func = self._handle_write
 
-        # ---- MIDI service ------------------------------------------------
-        await server.add_new_service(MIDI_SERVICE_UUID)
+            # ---- MIDI service --------------------------------------------
+            await server.add_new_service(MIDI_SERVICE_UUID)
 
-        # MIDI I/O characteristic: read + write-without-response + notify
-        char_props = (
-            GATTCharacteristicProperties.read
-            | GATTCharacteristicProperties.write_without_response
-            | GATTCharacteristicProperties.notify
-        )
-        char_perms = (
-            GATTAttributePermissions.readable | GATTAttributePermissions.writeable
-        )
-        await server.add_new_characteristic(
-            MIDI_SERVICE_UUID,
-            MIDI_CHAR_UUID,
-            char_props,
-            None,  # initial value
-            char_perms,
-        )
+            # MIDI I/O characteristic: read + write-without-response + notify
+            char_props = (
+                GATTCharacteristicProperties.read
+                | GATTCharacteristicProperties.write_without_response
+                | GATTCharacteristicProperties.notify
+            )
+            char_perms = (
+                GATTAttributePermissions.readable
+                | GATTAttributePermissions.writeable
+            )
+            await server.add_new_characteristic(
+                MIDI_SERVICE_UUID,
+                MIDI_CHAR_UUID,
+                char_props,
+                None,  # initial value
+                char_perms,
+            )
 
-        await server.start()
-        self._server = server
-        logger.info("BLE MIDI advertising as 'USB2BLE MIDI Bridge'")
+            try:
+                await server.start()
+                self._server = server
+                logger.info("BLE MIDI advertising as 'USB2BLE MIDI Bridge'")
+                return
+            except Exception as exc:
+                logger.warning(
+                    "Failed to register BLE advertisement (attempt %d/%d): %s",
+                    attempt,
+                    max_retries,
+                    exc,
+                )
+                # Clean up the failed server before retrying
+                try:
+                    await server.stop()
+                except Exception:
+                    logger.debug("Ignoring error during server cleanup", exc_info=True)
+
+                if attempt < max_retries:
+                    logger.info(
+                        "Retrying in %.1f s…",
+                        retry_delay,
+                    )
+                    await asyncio.sleep(retry_delay)
+                else:
+                    raise RuntimeError(
+                        f"Could not register BLE advertisement after "
+                        f"{max_retries} attempts"
+                    ) from exc
 
     def set_callback(self, callback: Callable[[bytes], None]) -> None:
         """Register a callback for MIDI data received from a BLE client."""
