@@ -38,6 +38,10 @@ Connect the USB Type A breakout board to ESP32-S3 as follows:
 4. Turn on Bluetooth on your mobile device/tablet and search for the MIDI device
 5. Start using - the piano's MIDI signals will now be transmitted via Bluetooth to the connected device
 
+> **No Bluetooth password or PIN is required.**
+> BLE MIDI uses the "Just Works" pairing model — simply tap **"USB2BLE MIDI Bridge"** in your app's
+> Bluetooth MIDI device list and it will connect without asking for any password or PIN code.
+
 ## Build and Flash
 
 ```bash
