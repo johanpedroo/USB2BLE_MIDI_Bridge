@@ -77,46 +77,10 @@ async def run() -> None:
     log.info("=== USB2BLE MIDI Bridge for Raspberry Pi 3B ===")
     log.info("Target: Yamaha Digital Piano  →  BLE MIDI")
 
-    # ------------------------------------------------------------------ Shutdown
-    # Set up signal handlers early so that a clean shutdown is possible even
-    # while the BLE stack is still initialising (e.g. waiting for the
-    # Bluetooth adapter to become ready).
-    stop_event = asyncio.Event()
-
-    def _handle_signal() -> None:
-        log.info("Shutdown signal received")
-        stop_event.set()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, _handle_signal)
-
     # ------------------------------------------------------------------ BLE
     ble = BLEMidi(loop=loop)
     log.info("Initialising BLE MIDI server…")
-
-    # Retry BLE initialisation indefinitely so that a temporary Bluetooth
-    # adapter issue (e.g. BlueZ not yet fully started) does not crash the
-    # service.  The stop_event allows a clean exit during retries.
-    while not stop_event.is_set():
-        try:
-            await ble.init()
-            break
-        except Exception as exc:
-            log.error(
-                "BLE MIDI initialisation failed: %s — retrying in %.0f s…",
-                exc,
-                RECONNECT_INTERVAL_S,
-            )
-            try:
-                await asyncio.wait_for(
-                    stop_event.wait(), timeout=RECONNECT_INTERVAL_S
-                )
-            except asyncio.TimeoutError:
-                pass  # timeout expired, retry BLE init
-
-    if stop_event.is_set():
-        log.info("Bridge stopped during BLE init.  Goodbye.")
-        return
+    await ble.init()
 
     # ------------------------------------------------------------------ USB MIDI callback
     # The rtmidi callback runs in a C++ thread; we must schedule the BLE send
@@ -127,6 +91,16 @@ async def run() -> None:
 
     # ------------------------------------------------------------------ USB
     usb = USBMidi(data_callback=on_usb_midi)
+
+    # ------------------------------------------------------------------ Shutdown
+    stop_event = asyncio.Event()
+
+    def _handle_signal() -> None:
+        log.info("Shutdown signal received")
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, _handle_signal)
 
     # ------------------------------------------------------------------ Main loop
     log.info("BLE advertising started.  Plug in your Yamaha piano via USB.")
