@@ -364,7 +364,7 @@ class BLEMidi:
         """Configure BLE advertising data for optimal MIDI discovery.
 
         Mirrors the raw advertising data approach used in ``ble_midi.c``
-        (PR #17).  Uses ``hcitool`` to programme the HCI controller with
+        (PR #17).  Uses ``hcitool`` to program the HCI controller with
         raw advertising and scan-response payloads that contain:
 
         * **Advertising data** – Flags (General Discoverable | BR/EDR Not
