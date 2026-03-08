@@ -132,9 +132,10 @@ info "Creating application directory at ${APP_DIR}…"
 mkdir -p "${APP_DIR}"
 
 info "Copying application files…"
-for f in midi_bridge.py ble_midi.py usb_midi.py requirements.txt; do
+for f in midi_bridge.py ble_midi.py usb_midi.py requirements.txt bt_setup.sh; do
     cp "${SCRIPT_DIR}/${f}" "${APP_DIR}/"
 done
+chmod +x "${APP_DIR}/bt_setup.sh"
 
 # ── 4. Python virtual environment ──────────────────────────────────────────
 info "Creating Python virtual environment at ${VENV_DIR}…"

@@ -18,8 +18,9 @@ Type=simple
 # Then replace User=root with User=midi_bridge below.
 User=root
 
-# Wait for the BlueZ LE subsystem to fully initialise before starting.
-ExecStartPre=/bin/sleep 3
+# Initialise the Bluetooth USB adapter (rfkill, hciconfig, bluetoothctl).
+# bt_setup.sh is idempotent and handles retries internally.
+ExecStartPre=/opt/midi_bridge/bt_setup.sh
 
 # ExecStart is rewritten by setup.sh to use the venv Python path.
 ExecStart=/opt/midi_bridge/venv/bin/python3 /opt/midi_bridge/midi_bridge.py
