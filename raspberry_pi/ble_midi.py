@@ -124,11 +124,15 @@ class BLEMidi:
                     logger.debug("Ignoring error during server cleanup", exc_info=True)
 
                 if attempt < max_retries:
-                    # After 3 consecutive failures, power-cycle the adapter
+                    # Every 3 consecutive failures, power-cycle the adapter
                     # to clear any orphaned advertisements left by a
-                    # previous crash.
-                    if attempt == 3:
-                        await self._reset_adapter()
+                    # previous crash.  After 6 failures, escalate to a full
+                    # bluetooth.service restart.
+                    if attempt % 3 == 0:
+                        restart_svc = attempt >= 6
+                        await self._reset_adapter(
+                            restart_service=restart_svc,
+                        )
 
                     delay = min(retry_delay * (2 ** (attempt - 1)), 10.0)
                     logger.info("Retrying in %.1f s…", delay)
@@ -217,8 +221,52 @@ class BLEMidi:
         except Exception as exc:
             logger.warning("Could not verify Bluetooth adapter state: %s", exc)
 
-    async def _reset_adapter(self) -> None:
-        """Power-cycle the Bluetooth adapter to clear stale BlueZ state."""
+    async def _restart_bluetooth_service(self) -> None:
+        """Restart the bluetooth systemd service to clear all BlueZ state.
+
+        This is the most reliable way to remove orphaned advertisements
+        left behind by a previous crash.
+        """
+        logger.info("Restarting bluetooth.service to clear stale state…")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "systemctl", "restart", "bluetooth",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode == 0:
+                logger.info("bluetooth.service restarted successfully")
+            else:
+                logger.warning(
+                    "systemctl restart bluetooth returned %d: %s",
+                    proc.returncode,
+                    stderr.decode().strip(),
+                )
+            # Give BlueZ time to fully reinitialise the adapter.
+            await asyncio.sleep(3)
+            # Re-power the adapter after the service restart.
+            await self._ensure_adapter_ready()
+        except FileNotFoundError:
+            logger.debug("systemctl not found — skipping bluetooth service restart")
+        except Exception as exc:
+            logger.warning("bluetooth.service restart failed: %s", exc)
+
+    async def _reset_adapter(self, *, restart_service: bool = False) -> None:
+        """Power-cycle the Bluetooth adapter to clear stale BlueZ state.
+
+        Parameters
+        ----------
+        restart_service:
+            When *True*, restart the ``bluetooth.service`` systemd unit
+            instead of just power-cycling the adapter.  This is more
+            aggressive and clears all BlueZ state including orphaned
+            advertisements.
+        """
+        if restart_service:
+            await self._restart_bluetooth_service()
+            return
+
         logger.info("Resetting Bluetooth adapter to clear stale state…")
         try:
             proc = await asyncio.create_subprocess_exec(

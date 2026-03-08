@@ -80,7 +80,28 @@ async def run() -> None:
     # ------------------------------------------------------------------ BLE
     ble = BLEMidi(loop=loop)
     log.info("Initialising BLE MIDI server…")
-    await ble.init()
+
+    # The BLE init itself retries internally, but if all attempts are
+    # exhausted (e.g. the bluetooth service is completely stuck) we still
+    # want the bridge to keep trying rather than crash.  Recreate the
+    # BLEMidi object each time to start with a clean slate.
+    ble_init_attempt = 0
+    while True:
+        try:
+            ble_init_attempt += 1
+            await ble.init()
+            break
+        except RuntimeError:
+            log.error(
+                "BLE init failed (outer attempt %d) — will retry in 30 s",
+                ble_init_attempt,
+            )
+            try:
+                await ble.stop()
+            except Exception:
+                pass
+            ble = BLEMidi(loop=loop)
+            await asyncio.sleep(30)
 
     # ------------------------------------------------------------------ USB MIDI callback
     # The rtmidi callback runs in a C++ thread; we must schedule the BLE send
