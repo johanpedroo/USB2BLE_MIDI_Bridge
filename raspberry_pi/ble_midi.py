@@ -181,7 +181,7 @@ class BLEMidi:
     # ------------------------------------------------------------------
 
     async def _ensure_adapter_ready(self) -> None:
-        """Verify the Bluetooth adapter is powered on; power it on if not."""
+        """Verify the Bluetooth adapter is powered on and discoverable."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 "bluetoothctl", "show",
@@ -189,29 +189,48 @@ class BLEMidi:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-            if "Powered: yes" in stdout.decode():
-                logger.debug("Bluetooth adapter is powered on")
-                return
+            adapter_info = stdout.decode()
 
-            logger.info(
-                "Bluetooth adapter is not powered on — attempting to power on…"
-            )
-            proc = await asyncio.create_subprocess_exec(
-                "bluetoothctl", "power", "on",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-            if proc.returncode == 0:
-                logger.info("Bluetooth adapter powered on successfully")
-            else:
-                logger.warning(
-                    "bluetoothctl power on returned %d: %s",
-                    proc.returncode,
-                    stderr.decode().strip(),
+            if "Powered: yes" not in adapter_info:
+                logger.info(
+                    "Bluetooth adapter is not powered on — attempting to power on…"
                 )
-            # Give the adapter a moment to initialise.
-            await asyncio.sleep(2)
+                proc = await asyncio.create_subprocess_exec(
+                    "bluetoothctl", "power", "on",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=10
+                )
+                if proc.returncode == 0:
+                    logger.info("Bluetooth adapter powered on successfully")
+                else:
+                    logger.warning(
+                        "bluetoothctl power on returned %d: %s",
+                        proc.returncode,
+                        stderr.decode().strip(),
+                    )
+                # Give the adapter a moment to initialise.
+                await asyncio.sleep(2)
+            else:
+                logger.debug("Bluetooth adapter is powered on")
+
+            # Ensure the adapter is discoverable so BLE clients (iOS, etc.)
+            # can find us.  discoverable-timeout 0 = always discoverable.
+            for cmd in (
+                ["bluetoothctl", "discoverable", "on"],
+                ["bluetoothctl", "discoverable-timeout", "0"],
+                ["bluetoothctl", "pairable", "on"],
+            ):
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=10)
+            logger.debug("Adapter set to discoverable + pairable")
+
         except FileNotFoundError:
             logger.debug("bluetoothctl not found — skipping adapter readiness check")
         except Exception as exc:

@@ -79,6 +79,7 @@ sudo ./setup.sh
 
 `setup.sh` will:
 - Install BlueZ, ALSA headers, and Python 3 packages
+- Configure BlueZ for BLE peripheral mode (`/etc/bluetooth/main.conf` + `--experimental` flag)
 - Create a virtual-env at `/opt/midi_bridge/venv`
 - Copy the application to `/opt/midi_bridge/`
 - Register and start the `midi_bridge` **systemd service** (auto-start on boot)
@@ -128,6 +129,17 @@ python3 midi_bridge.py --log-level DEBUG
 
 ## Troubleshooting
 
+### "The device doesn't appear in the iPhone / iPad Bluetooth settings"
+
+BLE MIDI devices do **not** appear in the iOS *Settings → Bluetooth* list.
+This is normal — iOS only shows classic Bluetooth devices there.
+
+To find a BLE MIDI device you must look inside a **MIDI-enabled app**:
+- **GarageBand** → Settings (⚙) → *Bluetooth MIDI Devices* → tap **"USB2BLE MIDI Bridge"**
+- **Piano – Play & Learn Music** or similar apps may have their own Bluetooth MIDI scanner.
+
+If the device still does not show up inside the app, see the "BLE advertising fails" section below.
+
 ### "Do I need a password or PIN to connect?"
 
 No. BLE MIDI uses the Bluetooth "Just Works" pairing model. You should **not** be asked for any
@@ -148,6 +160,20 @@ If your device unexpectedly asks for a PIN, try the following:
 sudo rfkill unblock bluetooth  # unblock if soft-blocked
 sudo hciconfig hci0 up         # bring adapter up
 sudo systemctl restart bluetooth
+```
+
+If re-running `setup.sh` doesn't help, verify that BlueZ is configured for BLE:
+```bash
+# Check /etc/bluetooth/main.conf contains:
+#   ControllerMode = le
+#   AutoEnable = true
+cat /etc/bluetooth/main.conf
+
+# Check the --experimental flag is present
+systemctl cat bluetooth | grep experimental
+
+# Confirm the adapter is discoverable
+bluetoothctl show  # should show: Discoverable: yes, Powered: yes
 ```
 
 ### Permission errors with BlueZ

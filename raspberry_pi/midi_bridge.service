@@ -4,7 +4,7 @@ Documentation=https://github.com/johanpedroo/USB2BLE_MIDI_Bridge
 # Start after Bluetooth and sound subsystems are ready.
 # bluetooth.service ensures the BlueZ daemon is running before we attempt
 # to register BLE advertisements.
-After=bluetooth.service sound.target dbus.service
+After=bluetooth.service bluetooth.target sound.target dbus.service
 Wants=bluetooth.service dbus.service
 
 [Service]
@@ -17,6 +17,9 @@ Type=simple
 #   sudo usermod -aG bluetooth,audio midi_bridge
 # Then replace User=root with User=midi_bridge below.
 User=root
+
+# Wait for the BlueZ LE subsystem to fully initialise before starting.
+ExecStartPre=/bin/sleep 3
 
 # ExecStart is rewritten by setup.sh to use the venv Python path.
 ExecStart=/opt/midi_bridge/venv/bin/python3 /opt/midi_bridge/midi_bridge.py

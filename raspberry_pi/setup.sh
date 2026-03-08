@@ -52,13 +52,62 @@ apt-get install -y --no-install-recommends \
     bluetooth \
     dbus
 
-# ── 2. Enable & start Bluetooth ────────────────────────────────────────────
-info "Enabling Bluetooth service…"
-systemctl enable bluetooth
-systemctl start  bluetooth
+# ── 2. Configure BlueZ for BLE peripheral / GATT server ───────────────────
+BLUEZ_CONF="/etc/bluetooth/main.conf"
+info "Configuring BlueZ (${BLUEZ_CONF}) for BLE peripheral mode…"
 
-# Give the adapter time to come up
-sleep 2
+# Back up the original configuration (only on first run)
+if [[ -f "${BLUEZ_CONF}" && ! -f "${BLUEZ_CONF}.orig" ]]; then
+    cp "${BLUEZ_CONF}" "${BLUEZ_CONF}.orig"
+fi
+
+# Ensure the [General] section contains the settings we need.
+# ControllerMode = le   – operate as LE-only so the adapter is dedicated to
+#                         BLE MIDI advertising (no BR/EDR classic pairing UI).
+# AutoEnable = true     – power the adapter automatically at boot.
+# [GATT] and [Policy] sections are also set for robustness.
+cat > "${BLUEZ_CONF}" <<'BLUEZ_EOF'
+# /etc/bluetooth/main.conf – configured by USB2BLE MIDI Bridge setup.sh
+
+[General]
+# Operate as BLE-only (no classic Bluetooth pairing prompts)
+ControllerMode = le
+
+# Automatically power-on the adapter at boot
+AutoEnable = true
+
+# Default adapter name (overridden by bless at runtime)
+Name = USB2BLE MIDI Bridge
+
+[Policy]
+AutoEnable = true
+BLUEZ_EOF
+
+# Add the --experimental flag to bluetoothd.
+# The bless library registers GATT services and LE advertisements via D-Bus
+# interfaces (org.bluez.GattManager1 / LEAdvertisingManager1) that require
+# the experimental flag on many Raspberry Pi OS / BlueZ combinations.
+OVERRIDE_DIR="/etc/systemd/system/bluetooth.service.d"
+info "Adding BlueZ --experimental flag (${OVERRIDE_DIR}/override.conf)…"
+mkdir -p "${OVERRIDE_DIR}"
+cat > "${OVERRIDE_DIR}/override.conf" <<'OVERRIDE_EOF'
+[Service]
+# Clear the original ExecStart so we can redefine it with --experimental
+ExecStart=
+ExecStart=/usr/libexec/bluetooth/bluetoothd --experimental
+OVERRIDE_EOF
+
+systemctl daemon-reload
+
+info "Enabling and (re)starting Bluetooth service…"
+systemctl enable bluetooth
+systemctl restart bluetooth
+
+# Give the adapter time to come up with the new configuration
+sleep 3
+
+# Unblock Bluetooth in case rfkill has it soft-blocked
+rfkill unblock bluetooth 2>/dev/null || true
 
 if hciconfig hci0 &>/dev/null; then
     info "Powering on Bluetooth adapter (hci0)…"
@@ -67,6 +116,12 @@ else
     warn "hci0 not found – make sure the Raspberry Pi Bluetooth is not blocked."
     warn "Run:  sudo rfkill unblock bluetooth"
 fi
+
+# Make the adapter discoverable so BLE clients can find us
+info "Setting adapter as discoverable…"
+bluetoothctl discoverable on        2>/dev/null || true
+bluetoothctl discoverable-timeout 0 2>/dev/null || true
+bluetoothctl pairable on            2>/dev/null || true
 
 # ── 3. Application directory ───────────────────────────────────────────────
 info "Creating application directory at ${APP_DIR}…"
