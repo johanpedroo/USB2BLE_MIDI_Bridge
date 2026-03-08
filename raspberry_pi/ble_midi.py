@@ -14,7 +14,6 @@ BlueZ must be installed and the Bluetooth adapter must be powered on.
 
 import asyncio
 import logging
-import subprocess
 import time
 from typing import Callable, Optional
 
@@ -184,25 +183,33 @@ class BLEMidi:
     async def _ensure_adapter_ready(self) -> None:
         """Verify the Bluetooth adapter is powered on; power it on if not."""
         try:
-            result = subprocess.run(
-                ["bluetoothctl", "show"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "show",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            if "Powered: yes" in result.stdout:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if "Powered: yes" in stdout.decode():
                 logger.debug("Bluetooth adapter is powered on")
                 return
 
             logger.info(
                 "Bluetooth adapter is not powered on — attempting to power on…"
             )
-            subprocess.run(
-                ["bluetoothctl", "power", "on"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "power", "on",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode == 0:
+                logger.info("Bluetooth adapter powered on successfully")
+            else:
+                logger.warning(
+                    "bluetoothctl power on returned %d: %s",
+                    proc.returncode,
+                    stderr.decode().strip(),
+                )
             # Give the adapter a moment to initialise.
             await asyncio.sleep(2)
         except FileNotFoundError:
@@ -214,19 +221,34 @@ class BLEMidi:
         """Power-cycle the Bluetooth adapter to clear stale BlueZ state."""
         logger.info("Resetting Bluetooth adapter to clear stale state…")
         try:
-            subprocess.run(
-                ["bluetoothctl", "power", "off"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "power", "off",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode != 0:
+                logger.warning(
+                    "bluetoothctl power off returned %d: %s",
+                    proc.returncode,
+                    stderr.decode().strip(),
+                )
+
             await asyncio.sleep(1)
-            subprocess.run(
-                ["bluetoothctl", "power", "on"],
-                capture_output=True,
-                text=True,
-                timeout=10,
+
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "power", "on",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode != 0:
+                logger.warning(
+                    "bluetoothctl power on returned %d: %s",
+                    proc.returncode,
+                    stderr.decode().strip(),
+                )
+
             await asyncio.sleep(2)
         except FileNotFoundError:
             logger.debug("bluetoothctl not found — skipping adapter reset")
