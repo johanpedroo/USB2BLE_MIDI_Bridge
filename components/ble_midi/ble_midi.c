@@ -576,9 +576,9 @@ esp_err_t ble_midi_init(void)
     // This ensures Android (and other clients) connect without a PIN dialog.
     esp_ble_io_cap_t iocap = ESP_IO_CAP_NONE;  // No input/output → "Just Works"
     esp_ble_auth_req_t auth_req = ESP_LE_AUTH_NO_BOND;  // No bonding, no MITM
-    uint8_t init_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
-    uint8_t rsp_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
     uint8_t key_size = 16;
+    uint8_t init_key = 0;  // No key distribution needed (no bonding)
+    uint8_t rsp_key = 0;   // No key distribution needed (no bonding)
 
     esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE, &auth_req, sizeof(auth_req));
     esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE, &iocap, sizeof(iocap));
