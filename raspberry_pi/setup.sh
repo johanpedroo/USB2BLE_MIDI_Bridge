@@ -113,11 +113,11 @@ sleep 3
 # Unblock Bluetooth in case rfkill has it soft-blocked
 rfkill unblock bluetooth 2>/dev/null || true
 
-if hciconfig hci0 &>/dev/null; then
-    info "Powering on Bluetooth adapter (hci0)…"
-    hciconfig hci0 up || warn "hciconfig hci0 up failed (may already be up)"
+if hciconfig hci1 &>/dev/null; then
+    info "Powering on Bluetooth adapter (hci1)…"
+    hciconfig hci1 up || warn "hciconfig hci1 up failed (may already be up)"
 else
-    warn "hci0 not found – make sure the Raspberry Pi Bluetooth is not blocked."
+    warn "hci1 not found – make sure the Raspberry Pi Bluetooth is not blocked."
     warn "Run:  sudo rfkill unblock bluetooth"
 fi
 
