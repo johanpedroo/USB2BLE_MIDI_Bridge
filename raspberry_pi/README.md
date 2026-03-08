@@ -158,7 +158,7 @@ If your device unexpectedly asks for a PIN, try the following:
 ### "BLE advertising fails / adapter not found"
 ```bash
 sudo rfkill unblock bluetooth  # unblock if soft-blocked
-sudo hciconfig hci0 up         # bring adapter up
+sudo hciconfig hci1 up         # bring adapter up
 sudo systemctl restart bluetooth
 ```
 
@@ -200,7 +200,7 @@ sudo usermod -aG bluetooth $USER
 
 ### Check Bluetooth adapter
 ```bash
-hciconfig          # should show: hci0 ... UP RUNNING
+hciconfig          # should show: hci1 ... UP RUNNING
 bluetoothctl show  # should show: Powered: yes
 ```
 
