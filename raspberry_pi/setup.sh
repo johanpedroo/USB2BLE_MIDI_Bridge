@@ -79,6 +79,10 @@ AutoEnable = true
 # Default adapter name (overridden by bless at runtime)
 Name = USB2BLE MIDI Bridge
 
+# Disable classic-Bluetooth plugins that are not needed in BLE-only mode.
+# Without this, bluetoothd logs errors for sap, avrcp, and bap on startup.
+DisablePlugins = sap,avrcp,bap
+
 [Policy]
 AutoEnable = true
 BLUEZ_EOF
