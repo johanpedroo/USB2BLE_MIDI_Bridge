@@ -151,14 +151,18 @@ static int32_t blemidi_outbuffer_push(uint8_t blemidi_port, uint8_t *stream, siz
     return 0;
 }
 
-// Broadcast data
+// Broadcast data (must fit within 31 bytes)
+// flags(3) + txpower(3) + uuid128(18) = 24 bytes
+// Note: appearance and connection interval are placed in scan response
+// to stay within the 31-byte advertising data limit.
+// Connection interval is negotiated during connection setup.
 static esp_ble_adv_data_t adv_data = {
     .set_scan_rsp = false,
     .include_name = false,
     .include_txpower = true,
-    .min_interval = 0x0006,
-    .max_interval = 0x0012,
-    .appearance = BLE_APPEARANCE_MIDI,   // Set to MIDI device
+    .min_interval = 0,
+    .max_interval = 0,
+    .appearance = 0,
     .manufacturer_len = 0,
     .p_manufacturer_data = NULL,
     .service_data_len = 0,
@@ -168,21 +172,24 @@ static esp_ble_adv_data_t adv_data = {
     .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
 };
 
-// Scan response data
+// Scan response data (must fit within 31 bytes)
+// name(2+19=21) + appearance(4) = 25 bytes
+// Note: flags are only required in advertising data per BLE spec,
+// not in scan response. Service UUID is already in adv_data.
 static esp_ble_adv_data_t scan_rsp_data = {
     .set_scan_rsp = true,
     .include_name = true,
-    .include_txpower = true,
-    .min_interval = 0x0006,
-    .max_interval = 0x0012,
-    .appearance = BLE_APPEARANCE_MIDI,   // Scan response also set to MIDI device
+    .include_txpower = false,
+    .min_interval = 0,
+    .max_interval = 0,
+    .appearance = BLE_APPEARANCE_MIDI,
     .manufacturer_len = 0,
     .p_manufacturer_data = NULL,
     .service_data_len = 0,
     .p_service_data = NULL,
-    .service_uuid_len = sizeof(midi_service_uuid),
-    .p_service_uuid = (uint8_t *)midi_service_uuid,
-    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
+    .service_uuid_len = 0,
+    .p_service_uuid = NULL,
+    .flag = 0,
 };
 
 // Broadcast parameters
@@ -258,9 +265,6 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
         break;
     }
 }
-
-// Add necessary UUID definitions
-static uint16_t midi_handle_table[MIDI_IDX_NB];
 
 static const uint16_t primary_service_uuid = ESP_GATT_UUID_PRI_SERVICE;
 static const uint16_t character_declaration_uuid = ESP_GATT_UUID_CHAR_DECLARE;
@@ -475,6 +479,7 @@ static void gatts_profile_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_
 
     case ESP_GATTS_DISCONNECT_EVT:
         ESP_LOGI(TAG, "ESP_GATTS_DISCONNECT_EVT, reason: 0x%x", param->disconnect.reason);
+        notifications_enabled = false;
         // Turn off LED when disconnected
         set_led_color(16, 0, 0);
         esp_ble_gap_start_advertising(&adv_params);
