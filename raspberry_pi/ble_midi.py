@@ -48,6 +48,12 @@ class BLEMidi:
         The running asyncio event loop.  Required by bless on Linux.
     """
 
+    # How often (in attempts) to power-cycle the adapter during retries.
+    _RESET_EVERY: int = 3
+    # After this many failures, escalate from a power-cycle to a full
+    # bluetooth.service restart.
+    _SERVICE_RESTART_THRESHOLD: int = 6
+
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
         self._server: Optional[BlessServer] = None
@@ -128,8 +134,8 @@ class BLEMidi:
                     # to clear any orphaned advertisements left by a
                     # previous crash.  After 6 failures, escalate to a full
                     # bluetooth.service restart.
-                    if attempt % 3 == 0:
-                        restart_svc = attempt >= 6
+                    if attempt % self._RESET_EVERY == 0:
+                        restart_svc = attempt >= self._SERVICE_RESTART_THRESHOLD
                         await self._reset_adapter(
                             restart_service=restart_svc,
                         )
