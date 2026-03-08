@@ -180,39 +180,65 @@ class BLEMidi:
     # Bluetooth adapter helpers
     # ------------------------------------------------------------------
 
-    async def _ensure_adapter_ready(self) -> None:
-        """Verify the Bluetooth adapter is powered on and discoverable."""
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "bluetoothctl", "show",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-            adapter_info = stdout.decode()
+    async def _ensure_adapter_ready(
+        self, power_retries: int = 5, power_retry_delay: float = 2.0
+    ) -> None:
+        """Verify the Bluetooth adapter is powered on and discoverable.
 
-            if "Powered: yes" not in adapter_info:
+        The method retries the *power on* step up to *power_retries* times
+        because on some BlueZ versions (notably 5.82 on Raspberry Pi OS
+        Bookworm) ``bluetoothctl power on`` may return a non-zero exit code
+        while the adapter is still initialising.  We poll ``bluetoothctl
+        show`` after each attempt and break out as soon as the adapter
+        reports ``Powered: yes``.
+        """
+        try:
+            powered = await self._adapter_is_powered()
+
+            if not powered:
                 logger.info(
                     "Bluetooth adapter is not powered on — attempting to power on…"
                 )
-                proc = await asyncio.create_subprocess_exec(
-                    "bluetoothctl", "power", "on",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=10
-                )
-                if proc.returncode == 0:
-                    logger.info("Bluetooth adapter powered on successfully")
-                else:
-                    logger.warning(
-                        "bluetoothctl power on returned %d: %s",
-                        proc.returncode,
-                        stderr.decode().strip(),
+                for attempt in range(1, power_retries + 1):
+                    proc = await asyncio.create_subprocess_exec(
+                        "bluetoothctl", "power", "on",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
                     )
-                # Give the adapter a moment to initialise.
-                await asyncio.sleep(2)
+                    stdout, stderr = await asyncio.wait_for(
+                        proc.communicate(), timeout=10
+                    )
+                    if proc.returncode == 0:
+                        logger.info("Bluetooth adapter powered on successfully")
+                    else:
+                        logger.warning(
+                            "bluetoothctl power on returned %d: %s",
+                            proc.returncode,
+                            stderr.decode().strip(),
+                        )
+
+                    # Brief pause so the adapter has time to report its
+                    # new state before we poll.
+                    await asyncio.sleep(0.5)
+
+                    if await self._adapter_is_powered():
+                        powered = True
+                        break
+
+                    # Wait the remaining delay only when we will retry.
+                    if attempt < power_retries:
+                        logger.info(
+                            "Adapter still not powered — retrying (%d/%d)…",
+                            attempt,
+                            power_retries,
+                        )
+                        await asyncio.sleep(power_retry_delay)
+                if not powered:
+                    logger.warning(
+                        "Bluetooth adapter did not power on after %d attempts "
+                        "— continuing anyway (bless may still succeed)",
+                        power_retries,
+                    )
             else:
                 logger.debug("Bluetooth adapter is powered on")
 
@@ -242,6 +268,19 @@ class BLEMidi:
             logger.debug("bluetoothctl not found — skipping adapter readiness check")
         except Exception as exc:
             logger.warning("Could not verify Bluetooth adapter state: %s", exc)
+
+    async def _adapter_is_powered(self) -> bool:
+        """Return True if ``bluetoothctl show`` reports *Powered: yes*."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "show",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            return "Powered: yes" in stdout.decode()
+        except Exception:
+            return False
 
     async def _reset_adapter(self) -> None:
         """Power-cycle the Bluetooth adapter to clear stale BlueZ state."""
