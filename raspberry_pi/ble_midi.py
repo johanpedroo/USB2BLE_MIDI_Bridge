@@ -216,19 +216,23 @@ class BLEMidi:
                             proc.returncode,
                             stderr.decode().strip(),
                         )
-                    # Give the adapter a moment to initialise.
-                    await asyncio.sleep(power_retry_delay)
+
+                    # Brief pause so the adapter has time to report its
+                    # new state before we poll.
+                    await asyncio.sleep(0.5)
 
                     if await self._adapter_is_powered():
                         powered = True
                         break
 
+                    # Wait the remaining delay only when we will retry.
                     if attempt < power_retries:
                         logger.info(
                             "Adapter still not powered — retrying (%d/%d)…",
                             attempt,
                             power_retries,
                         )
+                        await asyncio.sleep(power_retry_delay)
                 if not powered:
                     logger.warning(
                         "Bluetooth adapter did not power on after %d attempts "
