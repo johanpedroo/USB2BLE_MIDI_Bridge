@@ -53,8 +53,8 @@ static uint8_t adv_config_done = 0;
 #define adv_config_flag      (1 << 0)
 #define scan_rsp_config_flag (1 << 1)
 
-// Add MIDI appearance definition
-#define BLE_APPEARANCE_MIDI    0x0877    // Standard appearance value for MIDI device
+// MIDI BLE appearance value (for reference): 0x0877
+// This is embedded directly in the raw_scan_rsp_data below.
 
 struct gatts_profile_inst {
     esp_gatts_cb_t gatts_cb;
@@ -151,45 +151,32 @@ static int32_t blemidi_outbuffer_push(uint8_t blemidi_port, uint8_t *stream, siz
     return 0;
 }
 
-// Broadcast data (must fit within 31 bytes)
-// flags(3) + txpower(3) + uuid128(18) = 24 bytes
-// Note: appearance and connection interval are placed in scan response
-// to stay within the 31-byte advertising data limit.
-// Connection interval is negotiated during connection setup.
-static esp_ble_adv_data_t adv_data = {
-    .set_scan_rsp = false,
-    .include_name = false,
-    .include_txpower = true,
-    .min_interval = 0,
-    .max_interval = 0,
-    .appearance = 0,
-    .manufacturer_len = 0,
-    .p_manufacturer_data = NULL,
-    .service_data_len = 0,
-    .p_service_data = NULL,
-    .service_uuid_len = sizeof(midi_service_uuid),
-    .p_service_uuid = (uint8_t *)midi_service_uuid,
-    .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
+// Raw advertising data for guaranteed iOS/Android BLE MIDI compatibility.
+// Using raw data ensures the 128-bit MIDI Service UUID is correctly
+// formatted as AD type 0x07 (Complete List of 128-bit Service UUIDs),
+// which the high-level esp_ble_gap_config_adv_data() API may not
+// produce correctly on all ESP-IDF versions.
+// flags(3) + uuid128(18) = 21 bytes (within 31-byte limit)
+static uint8_t raw_adv_data[] = {
+    // Flags
+    0x02, 0x01, 0x06,  // Len=2, Type=Flags, Val=General Disc | BR/EDR Not Supported
+    // Complete List of 128-bit Service UUIDs (MIDI Service)
+    0x11, 0x07,         // Len=17, Type=Complete List of 128-bit UUIDs
+    0x00, 0xC7, 0xC4, 0x4E, 0xE3, 0x6C, 0x51, 0xA7,
+    0x33, 0x4B, 0xE8, 0xED, 0x5A, 0x0E, 0xB8, 0x03
 };
 
-// Scan response data (must fit within 31 bytes)
-// name(2+19=21) + appearance(4) = 25 bytes
-// Note: flags are only required in advertising data per BLE spec,
-// not in scan response. Service UUID is already in adv_data.
-static esp_ble_adv_data_t scan_rsp_data = {
-    .set_scan_rsp = true,
-    .include_name = true,
-    .include_txpower = false,
-    .min_interval = 0,
-    .max_interval = 0,
-    .appearance = BLE_APPEARANCE_MIDI,
-    .manufacturer_len = 0,
-    .p_manufacturer_data = NULL,
-    .service_data_len = 0,
-    .p_service_data = NULL,
-    .service_uuid_len = 0,
-    .p_service_uuid = NULL,
-    .flag = 0,
+// Raw scan response data
+// name(21) + appearance(4) = 25 bytes (within 31-byte limit)
+static uint8_t raw_scan_rsp_data[] = {
+    // Complete Local Name: "USB2BLE MIDI Bridge"
+    0x14, 0x09,  // Len=20, Type=Complete Local Name
+    'U', 'S', 'B', '2', 'B', 'L', 'E', ' ',
+    'M', 'I', 'D', 'I', ' ', 'B', 'r', 'i',
+    'd', 'g', 'e',
+    // Appearance: MIDI (0x0877)
+    0x03, 0x19,  // Len=3, Type=Appearance
+    0x77, 0x08   // 0x0877 little-endian
 };
 
 // Broadcast parameters
@@ -207,16 +194,16 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
     ESP_LOGI(TAG, "GAP event: %d", event);
     
     switch (event) {
-    case ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT:
-        ESP_LOGI(TAG, "ESP_GAP_BLE_ADV_DATA_SET_COMPLETE_EVT");
+    case ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT:
+        ESP_LOGI(TAG, "ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT");
         adv_config_done &= (~adv_config_flag);
         if (adv_config_done == 0){
             esp_ble_gap_start_advertising(&adv_params);
         }
         break;
         
-    case ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT:
-        ESP_LOGI(TAG, "ESP_GAP_BLE_SCAN_RSP_DATA_SET_COMPLETE_EVT");
+    case ESP_GAP_BLE_SCAN_RSP_DATA_RAW_SET_COMPLETE_EVT:
+        ESP_LOGI(TAG, "ESP_GAP_BLE_SCAN_RSP_DATA_RAW_SET_COMPLETE_EVT");
         adv_config_done &= (~scan_rsp_config_flag);
         if (adv_config_done == 0){
             esp_ble_gap_start_advertising(&adv_params);
@@ -614,18 +601,18 @@ esp_err_t ble_midi_init(void)
         return ret;
     }
 
-    // Configure broadcast data
-    ret = esp_ble_gap_config_adv_data(&adv_data);
+    // Configure raw advertising data
+    ret = esp_ble_gap_config_adv_data_raw(raw_adv_data, sizeof(raw_adv_data));
     if (ret) {
-        ESP_LOGE(TAG, "Failed to configure broadcast data: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to configure raw advertising data: %s", esp_err_to_name(ret));
         return ret;
     }
     adv_config_done |= adv_config_flag;
 
-    // Configure scan response data
-    ret = esp_ble_gap_config_adv_data(&scan_rsp_data);
+    // Configure raw scan response data
+    ret = esp_ble_gap_config_scan_rsp_data_raw(raw_scan_rsp_data, sizeof(raw_scan_rsp_data));
     if (ret) {
-        ESP_LOGE(TAG, "Failed to configure scan response data: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to configure raw scan response data: %s", esp_err_to_name(ret));
         return ret;
     }
     adv_config_done |= scan_rsp_config_flag;
