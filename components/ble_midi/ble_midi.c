@@ -260,6 +260,23 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
                  param->update_conn_params.timeout);
         break;
 
+    case ESP_GAP_BLE_SEC_REQ_EVT:
+        ESP_LOGI(TAG, "ESP_GAP_BLE_SEC_REQ_EVT");
+        // Always accept the security request – "Just Works" pairing
+        esp_ble_gap_security_rsp(param->ble_security.ble_req.bd_addr, true);
+        break;
+
+    case ESP_GAP_BLE_AUTH_CMPL_EVT:
+        ESP_LOGI(TAG, "ESP_GAP_BLE_AUTH_CMPL_EVT, addr_type: %d, auth_mode: %d, success: %d",
+                 param->ble_security.auth_cmpl.addr_type,
+                 param->ble_security.auth_cmpl.auth_mode,
+                 param->ble_security.auth_cmpl.success);
+        if (!param->ble_security.auth_cmpl.success) {
+            ESP_LOGW(TAG, "Authentication failed, reason: 0x%x",
+                     param->ble_security.auth_cmpl.fail_reason);
+        }
+        break;
+
     default:
         ESP_LOGI(TAG, "Unhandled GAP event: %d", event);
         break;
@@ -521,6 +538,14 @@ esp_err_t ble_midi_init(void)
 {
     esp_err_t ret;
 
+    // Release classic BT memory – this device is BLE-only.
+    // Prevents the ESP32 from being discovered as a classic Bluetooth
+    // device on Android (which would prompt for a PIN).
+    ret = esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+    if (ret) {
+        ESP_LOGW(TAG, "Classic BT memory release failed (may already be released): %s", esp_err_to_name(ret));
+    }
+
     // Initialize Bluetooth controller and stack
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret = esp_bt_controller_init(&bt_cfg);
@@ -546,6 +571,20 @@ esp_err_t ble_midi_init(void)
         ESP_LOGE(TAG, "Failed to enable Bluetooth stack: %s", esp_err_to_name(ret));
         return ret;
     }
+
+    // Configure BLE security for "Just Works" pairing (no PIN / no passkey).
+    // This ensures Android (and other clients) connect without a PIN dialog.
+    esp_ble_io_cap_t iocap = ESP_IO_CAP_NONE;  // No input/output → "Just Works"
+    esp_ble_auth_req_t auth_req = ESP_LE_AUTH_NO_BOND;  // No bonding, no MITM
+    uint8_t key_size = 16;
+    uint8_t init_key = 0;  // No key distribution needed (no bonding)
+    uint8_t rsp_key = 0;   // No key distribution needed (no bonding)
+
+    esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE, &auth_req, sizeof(auth_req));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE, &iocap, sizeof(iocap));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_MAX_KEY_SIZE, &key_size, sizeof(key_size));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &init_key, sizeof(init_key));
+    esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &rsp_key, sizeof(rsp_key));
 
     // Set local MTU size
     ret = esp_ble_gatt_set_local_mtu(GATTS_MIDI_CHAR_VAL_LEN_MAX);

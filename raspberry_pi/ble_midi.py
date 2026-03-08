@@ -272,7 +272,11 @@ class BLEMidi:
             # ── Step 4: discoverable + pairable ────────────────────────
             await asyncio.sleep(1)
 
+            # Register a "NoInputNoOutput" agent so BlueZ uses "Just Works"
+            # pairing (no PIN dialog on Android or other clients).
             for cmd, label in (
+                (["bluetoothctl", "agent", "NoInputNoOutput"], "agent NoInputNoOutput"),
+                (["bluetoothctl", "default-agent"], "default-agent"),
                 (["bluetoothctl", "discoverable", "on"], "discoverable on"),
                 (["bluetoothctl", "discoverable-timeout", "0"], "discoverable-timeout 0"),
                 (["bluetoothctl", "pairable", "on"], "pairable on"),
