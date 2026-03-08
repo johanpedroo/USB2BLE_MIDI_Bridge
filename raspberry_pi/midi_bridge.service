@@ -1,9 +1,11 @@
 [Unit]
 Description=USB2BLE MIDI Bridge
 Documentation=https://github.com/johanpedroo/USB2BLE_MIDI_Bridge
-# Start after Bluetooth and sound subsystems are ready
-After=bluetooth.target sound.target dbus.service
-Wants=bluetooth.target dbus.service
+# Start after Bluetooth and sound subsystems are ready.
+# bluetooth.service ensures the BlueZ daemon is running before we attempt
+# to register BLE advertisements.
+After=bluetooth.service sound.target dbus.service
+Wants=bluetooth.service dbus.service
 
 [Service]
 Type=simple

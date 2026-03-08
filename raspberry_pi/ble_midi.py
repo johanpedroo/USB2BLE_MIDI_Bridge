@@ -60,7 +60,7 @@ class BLEMidi:
     # ------------------------------------------------------------------
 
     async def init(
-        self, max_retries: int = 10, retry_delay: float = 3.0
+        self, max_retries: int = 10, retry_delay: float = 2.0
     ) -> None:
         """
         Initialise the BLE stack, register the MIDI GATT service, and start
@@ -69,8 +69,16 @@ class BLEMidi:
         If BlueZ refuses to register the advertisement (e.g. a stale
         advertisement from a previous crash is still registered, or the
         adapter is not yet ready), retry up to *max_retries* times with
-        *retry_delay* seconds between attempts.
+        exponential back-off (capped at 10 s) between attempts.
+
+        On the first attempt the helper *_ensure_adapter_ready()* verifies
+        (and if necessary powers on) the Bluetooth adapter.  After three
+        consecutive failures the adapter is power-cycled via
+        *_reset_adapter()* to clear any stale BlueZ state.
         """
+        # Make sure the adapter is powered on before the first attempt.
+        await self._ensure_adapter_ready()
+
         for attempt in range(1, max_retries + 1):
             server = BlessServer(name="USB2BLE MIDI Bridge", loop=self._loop)
             server.read_request_func = self._handle_read
@@ -116,11 +124,15 @@ class BLEMidi:
                     logger.debug("Ignoring error during server cleanup", exc_info=True)
 
                 if attempt < max_retries:
-                    logger.info(
-                        "Retrying in %.1f s…",
-                        retry_delay,
-                    )
-                    await asyncio.sleep(retry_delay)
+                    # After 3 consecutive failures, power-cycle the adapter
+                    # to clear any orphaned advertisements left by a
+                    # previous crash.
+                    if attempt == 3:
+                        await self._reset_adapter()
+
+                    delay = min(retry_delay * (2 ** (attempt - 1)), 10.0)
+                    logger.info("Retrying in %.1f s…", delay)
+                    await asyncio.sleep(delay)
                 else:
                     raise RuntimeError(
                         f"Could not register BLE advertisement after "
@@ -163,6 +175,85 @@ class BLEMidi:
             await self._server.stop()
             self._server = None
             logger.info("BLE MIDI server stopped")
+
+    # ------------------------------------------------------------------
+    # Bluetooth adapter helpers
+    # ------------------------------------------------------------------
+
+    async def _ensure_adapter_ready(self) -> None:
+        """Verify the Bluetooth adapter is powered on; power it on if not."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "show",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if "Powered: yes" in stdout.decode():
+                logger.debug("Bluetooth adapter is powered on")
+                return
+
+            logger.info(
+                "Bluetooth adapter is not powered on — attempting to power on…"
+            )
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "power", "on",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode == 0:
+                logger.info("Bluetooth adapter powered on successfully")
+            else:
+                logger.warning(
+                    "bluetoothctl power on returned %d: %s",
+                    proc.returncode,
+                    stderr.decode().strip(),
+                )
+            # Give the adapter a moment to initialise.
+            await asyncio.sleep(2)
+        except FileNotFoundError:
+            logger.debug("bluetoothctl not found — skipping adapter readiness check")
+        except Exception as exc:
+            logger.warning("Could not verify Bluetooth adapter state: %s", exc)
+
+    async def _reset_adapter(self) -> None:
+        """Power-cycle the Bluetooth adapter to clear stale BlueZ state."""
+        logger.info("Resetting Bluetooth adapter to clear stale state…")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "power", "off",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode != 0:
+                logger.warning(
+                    "bluetoothctl power off returned %d: %s",
+                    proc.returncode,
+                    stderr.decode().strip(),
+                )
+
+            await asyncio.sleep(1)
+
+            proc = await asyncio.create_subprocess_exec(
+                "bluetoothctl", "power", "on",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            if proc.returncode != 0:
+                logger.warning(
+                    "bluetoothctl power on returned %d: %s",
+                    proc.returncode,
+                    stderr.decode().strip(),
+                )
+
+            await asyncio.sleep(2)
+        except FileNotFoundError:
+            logger.debug("bluetoothctl not found — skipping adapter reset")
+        except Exception as exc:
+            logger.warning("Adapter reset failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Timestamp helpers (mirrors get_current_timestamp / pack_timestamp
