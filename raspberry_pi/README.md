@@ -167,6 +167,7 @@ If re-running `setup.sh` doesn't help, verify that BlueZ is configured for BLE:
 # Check /etc/bluetooth/main.conf contains:
 #   ControllerMode = le
 #   AutoEnable = true
+#   DisablePlugins = sap,avrcp,bap
 cat /etc/bluetooth/main.conf
 
 # Check the --experimental flag is present
@@ -175,6 +176,19 @@ systemctl cat bluetooth | grep experimental
 # Confirm the adapter is discoverable
 bluetoothctl show  # should show: Discoverable: yes, Powered: yes
 ```
+
+### bluetoothd logs errors about SAP, AVRCP, or BAP plugins
+
+If you see messages like these in `sudo journalctl -fu bluetooth`:
+```
+profiles/audio/bap.c:bap_adapter_probe() BAP requires ISO Socket which is not enabled
+profiles/audio/avrcp.c:avrcp_controller_server_probe() Unable to register AVRCP service record
+profiles/sap/server.c:sap_server_register() Adding SAP SDP record to the SDP server failed.
+```
+
+These errors come from classic-Bluetooth plugins that are not needed in BLE-only mode.
+The `setup.sh` script disables them via `DisablePlugins = sap,avrcp,bap` in `/etc/bluetooth/main.conf`.
+If you upgraded BlueZ or reinstalled the system, re-run `sudo ./setup.sh` to restore the setting.
 
 ### Permission errors with BlueZ
 Running as `root` (the default in `midi_bridge.service`) avoids most permission issues.  
