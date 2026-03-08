@@ -109,6 +109,9 @@ class BLEMidi:
                 await server.start()
                 self._server = server
                 logger.info("BLE MIDI advertising as 'USB2BLE MIDI Bridge'")
+                # Apply MIDI-specific raw advertising data (PR #17
+                # equivalent) to ensure iOS/Android discovery.
+                await self._configure_midi_advertising()
                 return
             except Exception as exc:
                 logger.warning(
@@ -288,6 +291,24 @@ class BLEMidi:
 
             logger.debug("Adapter set to discoverable + pairable")
 
+            # ── Step 5: MIDI appearance ────────────────────────────────
+            # Set the adapter's GAP appearance to MIDI (0x0877) so that
+            # BLE MIDI-specific scanners on iOS / Android can identify
+            # the device.  Mirrors the appearance field added to the
+            # ESP32 raw scan response data in PR #17.
+            try:
+                rc, _, err = await self._run_cmd(
+                    "btmgmt", "appearance", "0x0877"
+                )
+                if rc == 0:
+                    logger.debug("Set adapter appearance to MIDI (0x0877)")
+                else:
+                    logger.debug(
+                        "btmgmt appearance returned %d: %s", rc, err
+                    )
+            except FileNotFoundError:
+                logger.debug("btmgmt not found — skipping appearance")
+
         except FileNotFoundError:
             logger.debug("bluetoothctl not found — skipping adapter readiness check")
         except Exception as exc:
@@ -334,6 +355,90 @@ class BLEMidi:
             logger.debug("bluetoothctl not found — skipping adapter reset")
         except Exception as exc:
             logger.warning("Adapter reset failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    # BLE advertising helpers (mirrors raw adv data in ble_midi.c – PR #17)
+    # ------------------------------------------------------------------
+
+    async def _configure_midi_advertising(self) -> None:
+        """Configure BLE advertising data for optimal MIDI discovery.
+
+        Mirrors the raw advertising data approach used in ``ble_midi.c``
+        (PR #17).  Uses ``hcitool`` to program the HCI controller with
+        raw advertising and scan-response payloads that contain:
+
+        * **Advertising data** – Flags (General Discoverable | BR/EDR Not
+          Supported) + Complete List of 128-bit Service UUIDs (MIDI
+          Service ``03B80E5A-EDE8-4B33-A751-6CE34EC4C700``).
+        * **Scan response data** – Complete Local Name
+          (``USB2BLE MIDI Bridge``) + Appearance (MIDI – ``0x0877``).
+
+        This guarantees that iOS and Android MIDI-specific scanners can
+        discover the device, even when the ``bless`` library does not
+        include the MIDI appearance or formats the advertising data
+        differently than those platforms expect.
+
+        If ``hcitool`` is unavailable or the commands fail (e.g. because
+        BlueZ blocks direct HCI access), the default advertising set up
+        by ``bless`` is preserved – no error is raised.
+        """
+        # Raw advertising data (21 bytes):
+        #   Flags(3) + Complete List of 128-bit Service UUIDs(18)
+        raw_adv = bytes([
+            0x02, 0x01, 0x06,        # Flags: General Disc | BR/EDR Not Supported
+            0x11, 0x07,              # Complete List of 128-bit Service UUIDs
+            0x00, 0xC7, 0xC4, 0x4E, 0xE3, 0x6C, 0x51, 0xA7,
+            0x33, 0x4B, 0xE8, 0xED, 0x5A, 0x0E, 0xB8, 0x03,
+        ])
+
+        # Raw scan response data (25 bytes):
+        #   Complete Local Name(21) + Appearance(4)
+        raw_scan_rsp = bytes([
+            0x14, 0x09,              # Complete Local Name (len=20)
+            *b"USB2BLE MIDI Bridge",
+            0x03, 0x19,              # Appearance (len=3)
+            0x77, 0x08,              # 0x0877 little-endian = MIDI
+        ])
+
+        # HCI LE Set Advertising Data (OGF=0x08 OCF=0x0008)
+        # Parameter: 1-byte length + 31-byte data (zero-padded)
+        adv_padded = raw_adv.ljust(31, b"\x00")
+        adv_cmd = [
+            "hcitool", "-i", "hci0", "cmd", "0x08", "0x0008",
+            f"{len(raw_adv):02x}",
+            *(f"{b:02x}" for b in adv_padded),
+        ]
+
+        # HCI LE Set Scan Response Data (OGF=0x08 OCF=0x0009)
+        scan_padded = raw_scan_rsp.ljust(31, b"\x00")
+        scan_cmd = [
+            "hcitool", "-i", "hci0", "cmd", "0x08", "0x0009",
+            f"{len(raw_scan_rsp):02x}",
+            *(f"{b:02x}" for b in scan_padded),
+        ]
+
+        try:
+            rc, _, err = await self._run_cmd(*adv_cmd)
+            if rc == 0:
+                logger.info(
+                    "Set raw BLE advertising data (MIDI Service UUID + flags)"
+                )
+            else:
+                logger.debug("hcitool set adv data returned %d: %s", rc, err)
+
+            rc, _, err = await self._run_cmd(*scan_cmd)
+            if rc == 0:
+                logger.info(
+                    "Set raw BLE scan response data (name + MIDI appearance)"
+                )
+            else:
+                logger.debug("hcitool set scan rsp returned %d: %s", rc, err)
+        except FileNotFoundError:
+            logger.debug(
+                "hcitool not found — raw advertising configuration skipped"
+            )
+        except Exception as exc:
+            logger.debug("Failed to set raw advertising data: %s", exc)
 
     # ------------------------------------------------------------------
     # Timestamp helpers (mirrors get_current_timestamp / pack_timestamp

@@ -108,5 +108,16 @@ bluetoothctl discoverable-timeout 0 2>/dev/null || true
 sleep 0.5
 bluetoothctl pairable on            2>/dev/null || true
 
+# ── 6. Set MIDI appearance (0x0877) ───────────────────────────────────────
+# Mirrors the MIDI appearance in the raw scan response data used by the
+# ESP32 firmware (PR #17).  Setting the adapter appearance helps
+# iOS / Android BLE MIDI-specific scanners identify this device.
+if command -v btmgmt &>/dev/null; then
+    info "Setting adapter appearance to MIDI (0x0877)…"
+    btmgmt appearance 0x0877 2>/dev/null || true
+else
+    warn "btmgmt not found — skipping MIDI appearance configuration"
+fi
+
 info "Bluetooth adapter (${HCI_DEV}) is ready for BLE MIDI."
 exit 0
