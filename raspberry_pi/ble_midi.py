@@ -180,62 +180,108 @@ class BLEMidi:
     # Bluetooth adapter helpers
     # ------------------------------------------------------------------
 
+    async def _run_cmd(
+        self, *args: str, timeout: float = 10
+    ) -> tuple[int, str, str]:
+        """Run a command and return (returncode, stdout, stderr)."""
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout
+        )
+        return (
+            proc.returncode or 0,
+            stdout.decode(errors="replace").strip(),
+            stderr.decode(errors="replace").strip(),
+        )
+
     async def _ensure_adapter_ready(self) -> None:
-        """Verify the Bluetooth adapter is powered on and discoverable."""
+        """Verify the Bluetooth adapter is powered on and discoverable.
+
+        The method performs a multi-step initialisation that mirrors what
+        ``bt_setup.sh`` does, so the bridge can self-heal even when the
+        external script was not run (e.g. manual invocation).
+
+        Steps:
+          1. ``rfkill unblock bluetooth`` – clear any soft-block.
+          2. ``hciconfig hci0 up``        – bring the HCI device up.
+          3. ``bluetoothctl power on``     – power on via BlueZ (with retries).
+          4. Set discoverable / pairable.
+        """
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "bluetoothctl", "show",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-            adapter_info = stdout.decode()
-
-            if "Powered: yes" not in adapter_info:
-                logger.info(
-                    "Bluetooth adapter is not powered on — attempting to power on…"
-                )
-                proc = await asyncio.create_subprocess_exec(
-                    "bluetoothctl", "power", "on",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=10
-                )
-                if proc.returncode == 0:
-                    logger.info("Bluetooth adapter powered on successfully")
+            # ── Step 1: rfkill unblock ─────────────────────────────────
+            try:
+                rc, _, err = await self._run_cmd("rfkill", "unblock", "bluetooth")
+                if rc == 0:
+                    logger.debug("rfkill unblock bluetooth succeeded")
                 else:
-                    logger.warning(
-                        "bluetoothctl power on returned %d: %s",
-                        proc.returncode,
-                        stderr.decode().strip(),
-                    )
-                # Give the adapter a moment to initialise.
-                await asyncio.sleep(2)
-            else:
-                logger.debug("Bluetooth adapter is powered on")
+                    logger.debug("rfkill unblock bluetooth returned %d: %s", rc, err)
+            except FileNotFoundError:
+                logger.debug("rfkill not found — skipping unblock")
 
-            # Ensure the adapter is discoverable so BLE clients (iOS, etc.)
-            # can find us.  discoverable-timeout 0 = always discoverable.
-            for cmd in (
-                ["bluetoothctl", "discoverable", "on"],
-                ["bluetoothctl", "discoverable-timeout", "0"],
-                ["bluetoothctl", "pairable", "on"],
-            ):
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+            # ── Step 2: hciconfig up ───────────────────────────────────
+            try:
+                rc, _, err = await self._run_cmd("hciconfig", "hci0", "up")
+                if rc == 0:
+                    logger.debug("hciconfig hci0 up succeeded")
+                else:
+                    logger.debug("hciconfig hci0 up returned %d: %s", rc, err)
+                await asyncio.sleep(1)
+            except FileNotFoundError:
+                logger.debug("hciconfig not found — skipping HCI device up")
+
+            # ── Step 3: bluetoothctl power on (with retries) ───────────
+            powered = False
+            for attempt in range(1, 6):
+                rc, out, _ = await self._run_cmd("bluetoothctl", "show")
+                if "Powered: yes" in out:
+                    logger.debug("Bluetooth adapter is powered on")
+                    powered = True
+                    break
+
+                logger.info(
+                    "Bluetooth adapter is not powered on — "
+                    "attempting to power on (attempt %d/5)…",
+                    attempt,
                 )
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-                if proc.returncode != 0:
-                    logger.warning(
-                        "%s returned %d: %s",
-                        " ".join(cmd),
-                        proc.returncode,
-                        stderr.decode().strip(),
-                    )
+                await self._run_cmd("bluetoothctl", "power", "on")
+
+                # Also retry hciconfig as a fallback
+                try:
+                    await self._run_cmd("hciconfig", "hci0", "up")
+                except FileNotFoundError:
+                    pass
+
+                await asyncio.sleep(2)
+
+            if not powered:
+                # Final check
+                rc, out, _ = await self._run_cmd("bluetoothctl", "show")
+                if "Powered: yes" in out:
+                    powered = True
+
+            if not powered:
+                logger.warning(
+                    "Could not power on the Bluetooth adapter after 5 attempts. "
+                    "Run 'sudo bt_setup.sh' or check 'rfkill list' / 'hciconfig -a'."
+                )
+
+            # ── Step 4: discoverable + pairable ────────────────────────
+            await asyncio.sleep(1)
+
+            for cmd, label in (
+                (["bluetoothctl", "discoverable", "on"], "discoverable on"),
+                (["bluetoothctl", "discoverable-timeout", "0"], "discoverable-timeout 0"),
+                (["bluetoothctl", "pairable", "on"], "pairable on"),
+            ):
+                rc, _, err = await self._run_cmd(*cmd)
+                if rc != 0:
+                    logger.debug("bluetoothctl %s returned %d: %s", label, rc, err)
+                await asyncio.sleep(0.5)
+
             logger.debug("Adapter set to discoverable + pairable")
 
         except FileNotFoundError:
@@ -247,33 +293,37 @@ class BLEMidi:
         """Power-cycle the Bluetooth adapter to clear stale BlueZ state."""
         logger.info("Resetting Bluetooth adapter to clear stale state…")
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "bluetoothctl", "power", "off",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-            if proc.returncode != 0:
-                logger.warning(
-                    "bluetoothctl power off returned %d: %s",
-                    proc.returncode,
-                    stderr.decode().strip(),
-                )
+            # Power off via bluetoothctl
+            rc, _, err = await self._run_cmd("bluetoothctl", "power", "off")
+            if rc != 0:
+                logger.debug("bluetoothctl power off returned %d: %s", rc, err)
+
+            # Also bring HCI device down/up as a more forceful reset
+            try:
+                await self._run_cmd("hciconfig", "hci0", "down")
+            except FileNotFoundError:
+                pass
 
             await asyncio.sleep(1)
 
-            proc = await asyncio.create_subprocess_exec(
-                "bluetoothctl", "power", "on",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
-            if proc.returncode != 0:
-                logger.warning(
-                    "bluetoothctl power on returned %d: %s",
-                    proc.returncode,
-                    stderr.decode().strip(),
-                )
+            # rfkill unblock in case the power-off left a soft-block
+            try:
+                await self._run_cmd("rfkill", "unblock", "bluetooth")
+            except FileNotFoundError:
+                pass
+
+            # Bring HCI device back up
+            try:
+                await self._run_cmd("hciconfig", "hci0", "up")
+            except FileNotFoundError:
+                pass
+
+            await asyncio.sleep(1)
+
+            # Power on via bluetoothctl
+            rc, _, err = await self._run_cmd("bluetoothctl", "power", "on")
+            if rc != 0:
+                logger.debug("bluetoothctl power on returned %d: %s", rc, err)
 
             await asyncio.sleep(2)
         except FileNotFoundError:
