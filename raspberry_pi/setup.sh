@@ -64,27 +64,23 @@ fi
 # Ensure the [General] section contains the settings we need.
 # ControllerMode = le   – operate as LE-only so the adapter is dedicated to
 #                         BLE MIDI advertising (no BR/EDR classic pairing UI).
-# AutoEnable = true     – power the adapter automatically at boot.
-# [GATT] and [Policy] sections are also set for robustness.
+# Note: AutoEnable and DisablePlugins are NOT set here — they are unknown
+# keys on BlueZ >= 5.66.  AutoEnable is the default, and plugin disabling
+# is handled via --noplugin in the bluetoothd systemd override.
 cat > "${BLUEZ_CONF}" <<'BLUEZ_EOF'
 # /etc/bluetooth/main.conf – configured by USB2BLE MIDI Bridge setup.sh
+#
+# NOTE: AutoEnable and DisablePlugins were removed from [General] because
+# BlueZ >= 5.66 enables the adapter automatically and those keys cause
+# "Unknown key" warnings on BlueZ 5.82+.  Plugin disabling is handled
+# via the --noplugin flag in the bluetoothd systemd override instead.
 
 [General]
 # Operate as BLE-only (no classic Bluetooth pairing prompts)
 ControllerMode = le
 
-# Automatically power-on the adapter at boot
-AutoEnable = true
-
 # Default adapter name (overridden by bless at runtime)
 Name = USB2BLE MIDI Bridge
-
-# Disable classic-Bluetooth plugins that are not needed in BLE-only mode.
-# Without this, bluetoothd logs errors for sap, avrcp, and bap on startup.
-DisablePlugins = sap,avrcp,bap
-
-[Policy]
-AutoEnable = true
 BLUEZ_EOF
 
 # Add the --experimental flag to bluetoothd.
@@ -96,9 +92,11 @@ info "Adding BlueZ --experimental flag (${OVERRIDE_DIR}/override.conf)…"
 mkdir -p "${OVERRIDE_DIR}"
 cat > "${OVERRIDE_DIR}/override.conf" <<'OVERRIDE_EOF'
 [Service]
-# Clear the original ExecStart so we can redefine it with --experimental
+# Clear the original ExecStart so we can redefine it with --experimental.
+# --noplugin disables classic-Bluetooth plugins (sap, avrcp, bap) that are
+# not needed in BLE-only mode and avoids startup errors on some BlueZ builds.
 ExecStart=
-ExecStart=/usr/libexec/bluetooth/bluetoothd --experimental
+ExecStart=/usr/libexec/bluetooth/bluetoothd --experimental --noplugin=sap,avrcp,bap
 OVERRIDE_EOF
 
 systemctl daemon-reload
