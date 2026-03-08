@@ -228,7 +228,14 @@ class BLEMidi:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                await asyncio.wait_for(proc.communicate(), timeout=10)
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+                if proc.returncode != 0:
+                    logger.warning(
+                        "%s returned %d: %s",
+                        " ".join(cmd),
+                        proc.returncode,
+                        stderr.decode().strip(),
+                    )
             logger.debug("Adapter set to discoverable + pairable")
 
         except FileNotFoundError:
